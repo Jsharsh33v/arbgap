@@ -1,16 +1,23 @@
 from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
+from battery import Battery, check_plan
 from trade import best_trade, realized
 
 
 def run_day(da, rt, eff=0.85, wear=10):
-    a = realized(13, 19, rt, eff, wear)  # Fixed hours
-    buy, sell, expected = best_trade(da, eff, wear)
-    b = realized(buy, sell, rt, eff, wear)  # Keep the day-ahead plan
-    c_buy, c_sell, c = best_trade(rt, eff, wear)  # Hindsight
-    assert c >= a and c >= b
-    return {"A": a, "B": b, "C": c, "b_buy": buy, "b_sell": sell}
+      a = realized(13, 19, rt, eff, wear)  # Fixed hours
+      buy, sell, expected = best_trade(da, eff, wear)
+      b = realized(buy, sell, rt, eff, wear)  # Keep the day-ahead plan
+      c_buy, c_sell, c = best_trade(rt, eff, wear)  # Hindsight
+      assert c >= a and c >= b
+      # Replay every plan against the battery rules (see battery.py).
+      battery = Battery(eff=eff, wear=wear)
+      rule_breaks = 0
+      for plan in [(13, 19), (buy, sell), (c_buy, c_sell)]:
+          trades = [] if plan == (None, None) else [plan]
+          rule_breaks += len(check_plan(trades, battery, len(rt)))
+      return {"A": a, "B": b, "C": c, "b_buy": buy, "b_sell": sell, "rule_breaks": rule_breaks}
 
 
 def backtest(prices, eff=0.85, wear=10):
@@ -30,6 +37,8 @@ def backtest(prices, eff=0.85, wear=10):
         daily[column] = daily[column].astype("Int64")
     daily["B_minus_A"] = daily["B"] - daily["A"]
     daily["C_minus_B"] = daily["C"] - daily["B"]
+    print(f"Checked {3 * len(daily)} plans against the battery rules: "
+        f"{daily['rule_breaks'].sum()} broken.")
     Path("results").mkdir(exist_ok=True)
     daily.to_csv("results/daily.csv", index=False)
     return daily

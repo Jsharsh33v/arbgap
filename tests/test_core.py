@@ -1,6 +1,7 @@
 import pytest
 from trade import best_trade, realized, trade_profit
 from backtest import run_day
+from battery import Battery, check_plan
 
 
 def test_five_hour_example():
@@ -37,3 +38,22 @@ def test_hindsight_on_two_fake_days():
     assert (first["b_buy"], first["b_sell"]) == (None, None)
     assert (second["b_buy"], second["b_sell"]) == (1, 20)
     assert second["B"] == pytest.approx(-107.65)
+    assert first["rule_breaks"] == 0 and second["rule_breaks"] == 0
+
+
+def test_check_plan_accepts_valid_plans():
+      assert check_plan([(3, 4)], Battery()) == []
+      assert check_plan([], Battery()) == []  # skipping the day is always allowed
+      assert check_plan([(1, 2), (3, 4)], Battery(max_trades=2)) == []
+
+
+def test_check_plan_catches_broken_rules():
+      two_trades = Battery(max_trades=2)
+      # Cheating: buy at 1 and 2 before selling = 1.7 MWh in a 1 MWh battery.
+      problems = check_plan([(1, 5), (2, 6)], two_trades)
+      assert any("over capacity" in problem for problem in problems)
+      assert check_plan([(5, 3)], Battery())  # sells before it buys
+      assert check_plan([(3, 30)], Battery())  # hour 30 is not in the day
+      assert check_plan([(1, 2), (3, 4)], Battery())  # 2 trades, only 1 allowed
+      assert check_plan([(1, 3), (3, 4)], two_trades)  # buys and sells in hour 3
+      assert check_plan([(1, 2)], Battery(capacity_mwh=0.5))  # battery too small
