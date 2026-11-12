@@ -51,5 +51,4 @@ Overall results average the four hubs per date first. Each backtest replaces the
 
 Assumptions: buy 1 MWh (1 MW for one hour), sell 0.85 MWh, and pay $10 wear per MWh sold.
 Efficiency and wear are adjustable assumptions. B/C can skip a trade; A always trades.
-These are modeled energy-market values, not actual company earnings or significance tests.
-C is an upper bound in this one-trade model. Detailed battery limits and other costs are left out.
+These are modeled energy-market values, not actual company earnings. `results/ttests.csv` has one-sided paired t-tests on the 92 daily averages; `python sensitivity.py` and `python charts.py` add the sensitivity table and charts.
