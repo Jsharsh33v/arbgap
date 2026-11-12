@@ -1,6 +1,7 @@
 from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
+from scipy import stats
 from battery import Battery, check_plan
 from trade import best_trade, realized
 
@@ -69,3 +70,33 @@ def summarize(daily):
     plt.savefig("results/mean_values.png")
     plt.close()
     return summary
+
+
+
+
+def paired_tests(daily):
+    """One-sided paired t-tests for H1 and H2, overall and for each hub.
+
+    H1: B earns more than A.  H2: C - B (information) is bigger than B - A (decisions).
+    "All hubs" uses the 92 daily averages (four hubs averaged per date first).
+    """
+    groups = [("All hubs", daily.groupby("date")[["A", "B", "C"]].mean())]
+    for node, group in daily.groupby("node"):
+        groups.append((node, group))
+    rows = []
+    for name, data in groups:
+        decisions = data["B"] - data["A"]  # value of better decisions
+        information = data["C"] - data["B"]  # value of information
+        pairs = [("H1: B > A", data["B"], data["A"]),
+                 ("H2: C-B > B-A", information, decisions)]
+        for hypothesis, first, second in pairs:
+            result = stats.ttest_rel(first, second, alternative="greater")
+            rows.append({"group": name, "hypothesis": hypothesis,
+                         "mean_difference": (first - second).mean(),
+                         "t": result.statistic, "p_value": result.pvalue,
+                         "n_days": len(first)})
+    tests = pd.DataFrame(rows)
+    Path("results").mkdir(exist_ok=True)
+    tests.to_csv("results/ttests.csv", index=False)
+    print(tests.to_string(index=False, float_format="{:.4g}".format))
+    return tests

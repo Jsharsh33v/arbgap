@@ -1,6 +1,6 @@
 import argparse
 import pandas as pd
-from backtest import backtest, summarize
+from backtest import backtest, paired_tests, summarize
 from prepare_data import HUBS
 from trade import best_trade, realized
 
@@ -39,5 +39,6 @@ if __name__ == "__main__":
     if args.command == "backtest":
         daily = backtest(prices, args.eff, args.wear)
         summarize(daily)
+        paired_tests(daily)
     else:
         recommend(prices, args.date, args.node, args.eff, args.wear)

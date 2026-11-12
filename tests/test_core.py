@@ -1,6 +1,7 @@
+import pandas as pd
 import pytest
 from trade import best_trade, realized, trade_profit
-from backtest import run_day
+from backtest import paired_tests, run_day
 from battery import Battery, check_plan
 
 
@@ -57,3 +58,18 @@ def test_check_plan_catches_broken_rules():
       assert check_plan([(1, 2), (3, 4)], Battery())  # 2 trades, only 1 allowed
       assert check_plan([(1, 3), (3, 4)], two_trades)  # buys and sells in hour 3
       assert check_plan([(1, 2)], Battery(capacity_mwh=0.5))  # battery too small
+
+
+def test_paired_tests_find_clear_gain(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # save results/ttests.csv in a temporary folder
+    a = [1, 2, 3, 4, 5, 6, 7, 8]
+    daily = pd.DataFrame({
+        "date": [f"2026-05-0{i + 1}" for i in range(8)],
+        "node": "HB_TEST",
+        "A": a,
+        "B": [x + 2 + 0.1 * i for i, x in enumerate(a)],  # B always beats A
+        "C": [x + 6 + 0.35 * i for i, x in enumerate(a)],  # C - B always beats B - A
+    })
+    tests = paired_tests(daily)
+    assert (tests["p_value"] < 0.05).all()
+    assert (tests["n_days"] == 8).all()
