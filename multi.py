@@ -95,7 +95,7 @@ def best_plan_cpsat(prices, battery, time_limit=None, gap=None):
     returns the best plan found so far (FEASIBLE = valid but not proven best)."""
     hours, most = len(prices), units(battery)
     model = cp_model.CpModel()
-    buy = [model.NewBoolVar(f"buy_{t}") for t in range(hours)]
+    buy = [model.NewBoolVar(f"buy_{t}") for t in range(hours)]  
     sell = [model.NewBoolVar(f"sell_{t}") for t in range(hours)]
     level = [model.NewIntVar(0, most, f"level_{t}") for t in range(hours)]
     for t in range(hours):
@@ -122,16 +122,25 @@ def best_plan_cpsat(prices, battery, time_limit=None, gap=None):
     return trades, plan_profit(trades, prices, battery), solver.StatusName(status)
 
 
-def best_new_trade(prices, battery, trades):
-    """The most profitable trade that can be added to a plan without breaking a rule."""
-    hours, most = len(prices), units(battery)
-    if len(trades) >= battery.max_trades:
-        return None, 0.0
+NEIGHBORS = ["add", "swap", "split"]  # the neighbor functions hill_climb can use
+
+
+def hourly(trades, hours):
+    """For each hour: is it already used by a trade, and how many charges are stored."""
     busy, level = [False] * hours, [0] * hours
     for b, s in trades:
         busy[b] = busy[s] = True
         for t in range(b, s):
             level[t] += 1
+    return busy, level
+
+
+def best_new_trade(prices, battery, trades):
+    """The most profitable trade that can be added to a plan without breaking a rule."""
+    hours, most = len(prices), units(battery)
+    if len(trades) >= battery.max_trades:
+        return None, 0.0
+    busy, level = hourly(trades, hours)
     best, gain = None, 0.0
     for b in range(hours):
         if busy[b] or level[b] >= most:
@@ -148,25 +157,72 @@ def best_new_trade(prices, battery, trades):
     return best, gain
 
 
-def hill_climb(prices, battery):
+def best_buy_back(prices, battery, trades):
+    """The best 'sell early, buy back later' change: sell at hour s and buy again at a
+    later hour b, while the battery is holding energy in between.
+
+    It adds one trade and frees room in the middle of a long hold, which adding or
+    swapping whole trades can never do.
+    """
+    hours = len(prices)
+    if len(trades) >= battery.max_trades:
+        return None, 0.0
+    busy, level = hourly(trades, hours)
+    best, gain = None, 0.0
+    for s in range(hours):
+        if busy[s] or level[s] < 1:
+            continue
+        for b in range(s + 1, hours):
+            if level[b - 1] < 1:
+                break  # the battery would be below empty at hour b - 1
+            if busy[b]:
+                continue
+            value = trade_profit(prices[b], prices[s], battery.eff, battery.wear)
+            value -= battery.trade_cost
+            if value > gain + 1e-9:
+                best, gain = (s, b), value
+    return best, gain
+
+
+def with_buy_back(trades, sell, buy, hours):
+    """The plan after also selling at hour `sell` and buying back at hour `buy`."""
+    actions = [0] * hours
+    for b, s in trades:
+        actions[b], actions[s] = 1, -1
+    actions[sell], actions[buy] = -1, 1
+    return to_trades(actions)
+
+
+def hill_climb(prices, battery, neighbors="split"):
     """Heuristic: start with no trades and keep making the one change that adds the
-    most profit (add a trade, or swap one trade for a better one) until nothing helps.
+    most profit, until no change helps. `neighbors` sets which changes it may try:
+
+      "add"    add one trade
+      "swap"   add one trade, or replace one trade with a better one
+      "split"  add one trade, or sell early and buy back later (best_buy_back)
 
     Every plan it builds is valid, but it can stop at a local optimum: a plan that no
-    single change improves even though a better plan exists.
+    allowed change improves even though a better plan exists.
     """
+    if neighbors not in NEIGHBORS:
+        raise ValueError(f"neighbors must be one of {NEIGHBORS}")
     trades = []
     while True:
         move, gain = None, 1e-9
         new, value = best_new_trade(prices, battery, trades)
         if new is not None and value > gain:
             move, gain = trades + [new], value
-        for i, old in enumerate(trades):
-            others = trades[:i] + trades[i + 1:]
-            new, value = best_new_trade(prices, battery, others)
-            old_value = plan_profit([old], prices, battery)
-            if new is not None and value - old_value > gain:
-                move, gain = others + [new], value - old_value
+        if neighbors == "swap":
+            for i, old in enumerate(trades):
+                others = trades[:i] + trades[i + 1:]
+                new, value = best_new_trade(prices, battery, others)
+                old_value = plan_profit([old], prices, battery)
+                if new is not None and value - old_value > gain:
+                    move, gain = others + [new], value - old_value
+        if neighbors == "split":
+            pair, value = best_buy_back(prices, battery, trades)
+            if pair is not None and value > gain:
+                move, gain = with_buy_back(trades, pair[0], pair[1], len(prices)), value
         if move is None:
             return sorted(trades), plan_profit(trades, prices, battery)
         trades = move

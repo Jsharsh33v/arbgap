@@ -52,3 +52,36 @@ Overall results average the four hubs per date first. Each backtest replaces the
 Assumptions: buy 1 MWh (1 MW for one hour), sell 0.85 MWh, and pay $10 wear per MWh sold.
 Efficiency and wear are adjustable assumptions. B/C can skip a trade; A always trades.
 These are modeled energy-market values, not actual company earnings. `results/ttests.csv` has one-sided paired t-tests on the 92 daily averages; `python sensitivity.py` and `python charts.py` add the sensitivity table and charts.
+
+## Several trades a day
+
+`multi.py` plans a bigger battery that can trade more than once a day. Four methods solve
+the same problem:
+
+- **Brute force** (`best_plan_brute`) tries every valid plan. It is the answer key on small cases.
+- **Dynamic programming** (`best_plan_dp`) is exact and the fastest.
+- **CP-SAT** (`best_plan_cpsat`, Google OR-Tools) is exact and proves its plan is the best.
+- **Hill climbing** (`hill_climb`) is a heuristic. `--neighbors` sets which changes it may
+  try: `add` (add a trade), `swap` (add or replace a trade), or `split` (add a trade, or
+  sell early and buy back later).
+
+```bash
+python multi_backtest.py --capacity 2 --trades 2
+python compare_algorithms.py --date 2026-07-01 --node HB_HOUSTON
+python compare_algorithms.py --date 2026-05-05 --node HB_WEST --capacity 4 --trades 8 --neighbors add
+python compare_algorithms.py
+python compare_algorithms.py --z3
+```
+
+The first command reruns A/B/C for the bigger battery (saved in `results/multi_*.csv`). The
+next two solve one day with every method and print each plan, its profit, its share of the
+best profit, and the time. The fourth compares all methods on the 736 real price-days and on
+stretches of 1 to 92 days, and saves `results/algorithms_daily.csv` and
+`results/algorithms_horizons.csv`. The last one adds Z3 and needs `pip install z3-solver`.
+
+On the 736 price-days, dynamic programming and CP-SAT agree on every run. For a 4 MWh
+battery with 8 trades, hill climbing with `add` or `swap` finds the best plan on 721 days
+and with `split` on all 736. Planning 14 Houston days at once, `add` and `swap` earn 53.9%
+of the best profit and `split` earns all of it. `split` matched the exact answer in every
+case tested; that is evidence, not a proof. The model and each method are described in
+`docs/MODEL.md`.

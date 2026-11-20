@@ -50,22 +50,59 @@ Every backtest replays all A, B and C plans with `check_plan` (battery.py):
 368 hub-days × 3 plans = 1,104 plans. A test also feeds it a "cheating" plan that stores
 more than the battery holds, and it gets rejected.
 
-## Next version (planned): several trades a day
+## Several trades a day (multi.py)
 
-With k trades, the plan becomes how much to buy (c_t) and sell (d_t) in every hour,
-with the battery level s_t tracked hour by hour:
+A bigger battery holds up to U charges, where one charge is one 1 MWh buy
+(U = E / (η · P), rounded down; a 2 MWh battery holds 2). It makes up to k trades a day.
+For every hour t the plan picks one action:
 
-    maximize   Σ_t [ p_t · (d_t − c_t) − w · d_t ]  −  c · trades
+    buy_t  ∈ {0, 1}     buy 1 MWh in hour t
+    sell_t ∈ {0, 1}     sell one stored charge (η MWh) in hour t
+    level_t             charges stored after hour t
+
+    maximize   Σ_t [ sell_t · η · (p_t − w)  −  buy_t · (p_t + c) ]
 
     subject to
-      1. s_t = s_(t−1) + η · c_t − d_t                  battery level
-      2. 0 ≤ s_t ≤ E                                    capacity (purchases ≤ storage)
-      3. 0 ≤ c_t ≤ P and 0 ≤ d_t ≤ P                    power limit
-      4. s_0 = s_H = 0                                  start and end the day empty
-      5. (1 − η) · Σ_t c_t ≤ L                          max energy lost per day
-      6. Σ_t p_t · c_t + w · Σ_t d_t + c · trades ≤ M   max money spent per day
-      7. trades ≤ k
+      1. buy_t + sell_t ≤ 1                       one action per hour (power limit)
+      2. level_t = level_(t−1) + buy_t − sell_t   battery level; it starts at 0
+      3. 0 ≤ level_t ≤ U                          never below empty, never over capacity
+      4. level_(H−1) = 0                          end the day empty
+      5. Σ_t buy_t ≤ k                            trades per day
 
-With k = 1, c_b = 1 MWh and d_s = 0.85 MWh, this gives back the current model.
-Brute force can't check every plan here (see the worst-case section), so this version
-will use Google OR-Tools, with brute force kept as a test on small cases.
+With U = 1 and k = 1 this is the one-trade model above; a test checks that both give the
+same profit. Every choice is on or off, so the problem is combinatorial. There is no slope
+to follow, which is why gradient descent does not apply.
+
+Not built yet: the two daily limits from the first plan (max energy lost per day and max
+money spent per day).
+
+## The four methods and their worst case
+
+| Method | How it works | Always the best plan? | Worst-case work |
+|---|---|---|---|
+| Brute force `best_plan_brute` | tries every valid hour-by-hour plan | yes | up to 3^H plans. One day has 277 plans for U = 1, k = 1; 21,529 for U = 2, k = 2; 1,941,773,345 for U = 4, k = 8 |
+| Dynamic programming `best_plan_dp` | keeps the best profit for each state (charges stored, trades used) after every hour | yes | O(H · U · k) |
+| CP-SAT `best_plan_cpsat` | gives the five rules to Google OR-Tools, which searches and proves the best plan | yes, when the status is OPTIMAL | 3H variables; exponential in the worst case, fast in practice |
+| Hill climbing `hill_climb` | starts with no trades and keeps making the one change that adds the most profit | no | `add` and `split`: at most k steps, each checks O(H²) hour pairs. `swap` also retries every trade in each step |
+
+Every plan from every method is replayed by `check_plan` (battery.py).
+
+## Hill climbing's neighbor functions
+
+A neighbor is a plan that is one change away from the current plan. `neighbors` picks
+which changes are allowed:
+
+- `add`: add one trade.
+- `swap`: add one trade, or replace one trade with a better one.
+- `split`: add one trade, or sell early and buy back later while the battery holds energy.
+
+Example with prices 10, 100, 20, 110, U = 1, k = 2. `add` and `swap` take the biggest
+trade (buy hour 0, sell hour 3, $75.00) and stop, because it fills the battery all day.
+`split` then sells at hour 1 and buys back at hour 2. That gives two trades worth $131.50,
+which is the best plan.
+
+Results on the real data (`python compare_algorithms.py`): on 736 price-days with U = 4
+and k = 8, `add` and `swap` found the best plan on 721 days and `split` on all 736.
+Planning 14 Houston days at once, `add` and `swap` earned 53.9% of the best profit and
+`split` earned all of it. On 92 days `split` was the slowest method. `split` matched the
+exact answer in every case tested, which is evidence, not a proof.
